@@ -1,0 +1,50 @@
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  issue_created:
+    runs-on: ubuntu-latest
+    if: contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.issue.author_association)
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - run: sudo apt-get -y install ffmpeg
+        if: contains(github.event.issue.labels.*.name, 'whisper')
+      - uses: actions/github-script@v6
+        if: contains(github.event.issue.labels.*.name, 'whisper') || contains(github.event.issue.labels.*.name, 'captions')
+        name: Save metadata
+        with:
+          script: |
+            const script = require('./scripts/save_metadata.js')
+            script(context)
+      - uses: actions/github-script@v6
+        name: Extract captions
+        # Only run this step if the issue is labeled with "captions"
+        if: contains(github.event.issue.labels.*.name, 'captions')
+        with:
+          script: |
+            const script = require('./scripts/extract_captions.js')
+            await script({ context, github, glob })
+      - uses: actions/github-script@v6
+        name: Run it through whisper
+        # Only run this step if the issue is labeled with "whisper"
+        if: contains(github.event.issue.labels.*.name, 'whisper')
+        env:
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+        with:
+          script: |
+            const script = require('./scripts/transcribe_with_whisper.js')
+            script({ context, github })
+      - name: Commit and push
+        run: |-
+          git config user.name "Automated"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Refs #${{ github.event.issue.number }}" || exit 0
+          git pull --rebase
+          git push
